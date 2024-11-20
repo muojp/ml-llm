@@ -27,13 +27,13 @@ My Little LLM（ml-llm）は、1つのHTMLファイルで動作する軽量な�
 
 2. フロントエンドを起動
 
-https://muojp.github.io/mlllm/ をWebブラウザで開く
+https://muojp.github.io/ml-llm/ をWebブラウザで開く
 
 ## インストール方法（セルフホストしたい場合）
 
 1. このリポジトリをクローン、もしくはZIPファイルとしてダウンロード
 ```bash
-git clone https://github.com/muojp/mlllm.git
+git clone https://github.com/muojp/ml-llm.git
 ```
 
 2. LLMサーバーのセットアップ（別途手順を参照）
