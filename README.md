@@ -59,14 +59,22 @@ index.htmlをWebブラウザで開く
 ### セッションの復元
 - チャット欄に「 `RESTORE:{...}` 」と保存したJSONを貼り付けて送信すると履歴を復元
 
-## LLMサーバーのセットアップとHTTPSアクセス化
+## LLMチャットサーバーのセットアップとHTTPSアクセス化
+
+ml-llmが提供するのはコンパクトなフロントエンドのみです。実際の利用にはLLMチャットサーバーが必要です。
+
+macOS上でコンパクトに動作するGemma 2 2B日本語版（gemma-2-2b-jpn-it-8bit）のMLX版モデルをおすすめしています。
+
+このモデルはmlx-lmの提供する組み込みチャットサーバーを使って次のコマンドにてホスト開始できます。
 
 ```bash
 pip install mlx-lm
 mlx_lm.server --model mlx-community/gemma-2-2b-jpn-it-8bit --host 0.0.0.0
 ```
 
-ngrokでHTTPSアクセスを通せるようにする
+https://muojp.github.io/ml-llm/ を利用する場合、mlx-lm serverに対してHTTPでのアクセスはWebブラウザのセキュリティポリシーによって禁止されます。
+
+HTTPS経由でホストする方法は色々とありますが、簡易的な動作確認用にngrokでHTTPSアクセスを通せるようにする手順は次のとおりです。
 
 ```bash
 ngrok http http://localhost:8080
