@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="alternate icon" type="image/png" href="assets/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+    <link rel="manifest" href="manifest.json">
+    <meta name="msapplication-TileImage" content="assets/mstile-144x144.png">
+    <meta name="msapplication-TileColor" content="#3b82f6">
+    <meta name="theme-color" content="#3b82f6">
+    <title>My Little LLM</title>
+    <style>
+        .chat-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .chat-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .chat-messages {
+            height: 500px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 80%;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: auto;
+            border-radius: 15px 15px 0 15px;
+        }
+        .message.user-message {
+            cursor: pointer; /* ユーザーメッセージがクリック可能なことを示す */
+        }
+        .message.editing {
+            padding: 0;
+        }
+        .edit-input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #2196f3;
+            border-radius: 15px 15px 0 15px;
+            background-color: #e3f2fd;
+            font-family: inherit;
+            font-size: inherit;
+            resize: vertical;
+            min-height: 40px;
+            margin: 0;
+        }
+        .edit-input:focus {
+            outline: none;
+        }
+        .bot-message {
+            background-color: #ffffff;
+            margin-right: auto;
+            border-radius: 15px 15px 15px 0;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        #message-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #1976d2;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .error {
+            color: #f44336;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #ffebee;
+        }
+        .typing-indicator {
+            display: none;
+            margin: 10px 0;
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div style="margin-bottom: 10px;">
+            <input type="text" id="server-url" 
+                   style="width: 180px; padding: 5px; font-size:xx-small" 
+                   placeholder="MLX LM Server URL (例: http://localhost:8080)"
+                   value="http://localhost:8080">
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <!-- メッセージはここに動的に追加されます -->
+        </div>
+        <div class="typing-indicator" id="typing-indicator">応答を生成中...</div>
+        <div class="error" id="error-message" style="display: none;"></div>
+        <div class="input-container">
+            <textarea id="message-input" placeholder="メッセージを入力..." rows="3"></textarea>
+            <button id="send-button" onclick="sendMessage()">送信</button>
+        </div>
+    </div>
+
+    <script>
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const typingIndicator = document.getElementById('typing-indicator');
+        const messagesDiv = document.getElementById('chat-messages');
+
+        let messageHistory = [];
+        
+        function trimText(text) {
+            let processed = text.replace(/<end_of_turn>[\s\n\r]*$/, '');
+            processed = processed.replace(/[\s\n\r]+$/, '');
+            
+            return processed;
+        }
+
+        function addMessage(content, isUser) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+
+            const messageObj = {
+                content: content,
+                role: isUser ? 'user' : 'assistant',
+                element: messageDiv
+            };
+            messageHistory.push(messageObj);
+
+            messageDiv.textContent = trimText(content);
+            if (isUser) {
+                messageDiv.addEventListener('dblclick', () => startEditing(messageObj));
+            }
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            return messageObj;
+        }
+
+        function startEditing(messageObj) {
+            const messageDiv = messageObj.element;
+            messageDiv.className += ' editing';
+            
+            // 編集用のテキストエリアを作成
+            const textarea = document.createElement('textarea');
+            textarea.className = 'edit-input';
+            textarea.value = messageObj.content;
+            
+            // 現在のテキストを保存して、テキストエリアに置き換え
+            messageDiv.textContent = '';
+            messageDiv.appendChild(textarea);
+
+            adjustTextareaHeight(textarea);
+
+            textarea.focus();
+            
+            // Enterキーで編集完了（Shift+Enterで改行）
+            textarea.addEventListener('keydown', async (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    const newContent = textarea.value.trim();
+                    if (newContent && newContent !== messageObj.content) {
+                        // 編集されたメッセージ以降の履歴をクリア
+                        const index = messageHistory.indexOf(messageObj);
+                        if (index !== -1) {
+                            // 後続のメッセージを削除
+                            const removedMessages = messageHistory.splice(index + 1);
+                            removedMessages.forEach(msg => msg.element.remove());
+                            
+                            // メッセージを更新して再生成
+                            messageObj.content = newContent;
+                            finishEditing(messageObj);
+                            await regenerateFromMessage(messageObj);
+                        }
+                    }
+                    else {
+                        // 編集モードを終了
+                        finishEditing(messageObj);
+                    }
+                }
+            });
+            
+            // フォーカスを失ったら編集モードを終了
+            textarea.addEventListener('blur', () => {
+                if (!messageDiv.classList.contains('editing')) return;
+                finishEditing(messageObj);
+            });
+        }
+        
+        function adjustTextareaHeight(textarea) {
+            // 一時的に高さを0にして実際のコンテンツの高さを取得
+            textarea.style.height = '0';
+            const scrollHeight = textarea.scrollHeight;
+            // スクロールの高さに基づいて高さを設定
+            textarea.style.height = `${scrollHeight}px`;
+        }
+
+        function finishEditing(messageObj) {
+            const messageDiv = messageObj.element;
+            if (!messageDiv.classList.contains('editing')) return;
+            messageDiv.className = `message ${messageObj.role === 'user' ? 'user-message' : 'bot-message'}`;
+            messageDiv.textContent = messageObj.content;
+        }
+        
+        async function regenerateFromMessage(messageObj) {
+            setLoading(true);
+            
+            try {
+                const index = messageHistory.indexOf(messageObj);
+                if (index !== -1) {
+                    // 後続のメッセージを削除
+                    const removedMessages = messageHistory.splice(index + 1);
+                    removedMessages.forEach(msg => msg.element.remove());
+                }
+                
+                // 編集されたメッセージまでの履歴で再生成
+                await sendMessageWithHistory(messageObj.content, messageObj);
+                
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        function setLoading(loading) {
+            messageInput.disabled = loading;
+            sendButton.disabled = loading;
+            typingIndicator.style.display = loading ? 'block' : 'none';
+        }
+
+        async function sendMessageWithHistory(content, messageHistoryUpTo = null) {
+            try {
+                const serverUrl = document.getElementById('server-url').value.trim();
+                if (!serverUrl) {
+                    throw new Error('サーバーURLを入力してください');
+                }
+
+                // 会話履歴の準備
+                let historyToSend;
+                if (messageHistoryUpTo) {
+                    const index = messageHistory.indexOf(messageHistoryUpTo);
+                    historyToSend = messageHistory.slice(0, index + 1);
+                } else {
+                    historyToSend = messageHistory;
+                }
+                
+                // APIリクエスト用のメッセージ形式に変換
+                const messages = historyToSend.map(msg => ({
+                    role: msg.role,
+                    content: msg.content
+                }));
+
+                const response = await fetch(`${serverUrl}/v1/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        messages: messages,
+                        stream: true,
+                        temperature: 0.7,
+                        max_tokens: 2048
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`サーバーエラー: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                let botResponse = '';
+                let responseObj = null;
+
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+                    
+                    const text = new TextDecoder().decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const jsonStr = line.slice(5);
+                            if (jsonStr.trim() === '[DONE]') continue;
+                            
+                            console.log(jsonStr);
+                            try {
+                                const data = JSON.parse(jsonStr);
+                                if (data.choices && data.choices[0]) {
+                                    const content = data.choices[0].delta?.content || '';
+                                    botResponse += content;
+                                    
+                                    if (!responseObj) {
+                                        responseObj = addMessage(botResponse, false);
+                                    } else {
+                                        responseObj.content = botResponse;
+                                        const processedResponse = trimText(botResponse);
+                                        responseObj.element.textContent = processedResponse;
+                                    }
+                                    
+                                    responseObj.element.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                                }
+                            } catch (e) {
+                                console.error('Error parsing JSON:', e);
+                            }
+                        }
+                    }
+                }
+                
+                return responseObj;
+                
+            } catch (error) {
+                showError(error.message);
+                return null;
+            }
+        }
+
+        // ページ読み込み時にURLをローカルストレージから復元
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedUrl = localStorage.getItem('mlx-server-url');
+            if (savedUrl) {
+                document.getElementById('server-url').value = savedUrl;
+            }
+        });
+
+        // URLが変更されたらローカルストレージに保存
+        document.getElementById('server-url').addEventListener('change', (e) => {
+            localStorage.setItem('mlx-server-url', e.target.value);
+        });
+
+        function createSessionDump() {
+            // メッセージ履歴をシリアライズ可能な形式に変換
+            const dumpData = messageHistory.map(msg => ({
+                role: msg.role,
+                content: msg.content
+            }));
+            return JSON.stringify(dumpData, null, 2);
+        }
+
+        function restoreSession(jsonString) {
+            try {
+                const messages = JSON.parse(jsonString);
+                
+                messageHistory = [];
+                messagesDiv.innerHTML = '';
+                
+                messages.forEach(msg => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `message ${msg.role === 'user' ? 'user-message' : 'bot-message'}`;
+
+                    const messageObj = {
+                        content: msg.content,
+                        role: msg.role,
+                        element: messageDiv
+                    };
+                    messageHistory.push(messageObj);
+
+                    messageDiv.textContent = trimText(msg.content);
+
+                    if (msg.role === 'user') {
+                        messageDiv.addEventListener('dblclick', () => startEditing(messageObj));
+                    }
+                    
+                    messagesDiv.appendChild(messageDiv);
+                });
+                
+                // スクロールを最下部に
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                return true;
+            } catch (e) {
+                console.error('Session restore failed:', e);
+                showError('セッションの復元に失敗しました。正しいJSON形式であることを確認してください。');
+                return false;
+            }
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // DUMPコマンドの処理
+            if (message === 'DUMP') {
+                const dump = createSessionDump();
+                // ダンプをボットの応答として表示
+                const dumpObj = addMessage(dump, false);
+                dumpObj.element.style.whiteSpace = 'pre';  // 整形されたJSONの表示を保持
+                messageInput.value = '';
+                return;
+            }
+
+            // リストアの処理
+            if (message.startsWith('RESTORE:')) {
+                try {
+                    const jsonStr = message.slice('RESTORE:'.length).trim();
+                    // JSONとして解析できる場合、リストアを試みる
+                    JSON.parse(jsonStr);
+                    if (restoreSession(jsonStr)) {
+                        messageInput.value = '';
+                        return;
+                    }
+                } catch (e) {
+                }
+                return;
+            }
+
+            const messageObj = addMessage(message, true);
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            setLoading(true);
+
+            try {
+                await sendMessageWithHistory(message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // エラー表示を改善
+        function showError(message, duration = 5000) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            
+            // エラーメッセージを指定時間後に消す
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, duration);
+        }
+
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // 初期フォーカス
+        messageInput.focus();
+    </script>
+</body>
+</html>
